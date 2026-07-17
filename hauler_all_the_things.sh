@@ -25,7 +25,7 @@
 #   USE_SUDO			[false]
 #
 # purge and clean the controller:
-#   systemctl disable --now rke2-server.service rke2-agent.service hauler-fileserver-amd64@8080 hauler-fileserver-arm64@8081 hauler-registry-amd64@5000 hauler-registry-arm64@5001; umount -l $(mount | grep /run/k3s/containerd | cut -d' ' -f3); dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf ../hauler/* /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/ /usr/local/bin/{hauler,helm} /tmp/{airgap,hauler,helm}*;
+#   helm uninstall rancher -n cattle-system; kubectl delete namespace cattle-system; helm uninstall longhorn -n longhorn-system; kubectl delete namespace longhorn-system; systemctl disable --now rke2-server.service rke2-agent.service hauler-fileserver-amd64@8080 hauler-fileserver-arm64@8081 hauler-registry-amd64@5000 hauler-registry-arm64@5001; umount -l $(mount | grep /run/k3s/containerd | cut -d' ' -f3); dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf ../hauler/* /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/ /usr/local/bin/{hauler,helm} /tmp/{airgap,hauler,helm}*;
 #
 # purge and clean a worker
 #   systemctl disable --now rke2-agent.service; dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/
