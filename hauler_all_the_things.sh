@@ -12,6 +12,7 @@
 #   RANCHER_VERSION		[latest]
 #   RANCHER_BOOTSTRAP_PASSWORD	<must be set>
 #   RKE_VERSION			[latest]
+#   RKE_CLUSTER_JOIN_TOKEN	<must be set>
 #   CERT_VERSION		[latest]
 #   LONGHORN_VERSION		[latest]
 #   HAULER_VERSION		[latest]
@@ -480,6 +481,10 @@ EOF
 function deploy_control () {
   # this is for the first node
   [ $EUID -eq 0 ] || fatal Please execute as root.
+  if [ -z "${RKE_CLUSTER_JOIN_TOKEN+x}" ] || [ -z "$RKE_CLUSTER_JOIN_TOKEN" ]; then
+    echo "ERROR: RKE_CLUSTER_JOIN_TOKEN is not set. It must be set as an environment variable before running this script."
+    exit 1
+  fi
 
   # wait and add link
   grep -qxF "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH=\$PATH:${HAULER_INSTALL_DIR}/:${HELM_INSTALL_DIR}/:/var/lib/rancher/rke2/bin/" ~/.bashrc || echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH=\$PATH:${HAULER_INSTALL_DIR}/:${HELM_INSTALL_DIR}/:/var/lib/rancher/rke2/bin/" >> ~/.bashrc
@@ -506,7 +511,7 @@ EOF
 
   # create stig config files
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images
-  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\ntoken: bootstrapAllTheThings\nwrite-kubeconfig-mode: \"0600\"\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
+  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
 
   # set up audit policy file
   echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nmetadata:\n  name: rke2-audit-policy\nrules:\n  - level: Metadata\n    resources:\n    - group: \"\"\n      resources: [\"secrets\"]\n  - level: RequestResponse\n    resources:\n    - group: \"\"\n      resources: [\"*\"]" > /etc/rancher/rke2/audit-policy.yaml
@@ -541,6 +546,10 @@ EOF
 ################################# deploy worker ################################
 function deploy_worker () {
   [ $EUID -eq 0 ] || fatal Please execute as root.
+  if [ -z "${RKE_CLUSTER_JOIN_TOKEN+x}" ] || [ -z "$RKE_CLUSTER_JOIN_TOKEN" ]; then
+    echo "ERROR: RKE_CLUSTER_JOIN_TOKEN is not set. It must be set as an environment variable before running this script."
+    exit 1
+  fi
 
   echo - deploy worker
 
@@ -550,7 +559,7 @@ function deploy_worker () {
   # setup RKE2
   info "setting up rke2 agent"
   mkdir -p /etc/rancher/rke2/
-  echo -e "server: https://${serverIp}:9345\ntoken: bootstrapAllTheThings\nwrite-kubeconfig-mode: \"0600\"\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
+  echo -e "server: https://${serverIp}:9345\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
 
   # install rke2
   dnf install -y rke2-agent rke2-common rke2-selinux > /dev/null 2>&1 || fatal "packages didn't install"
