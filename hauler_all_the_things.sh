@@ -15,6 +15,7 @@
 #   RKE_CLUSTER_JOIN_TOKEN	<must be set>
 #   CERT_VERSION		[latest]
 #   LONGHORN_VERSION		[latest]
+#   LONGHORN_BOOTSTRAP_PASSWORD <must be set>
 #   HAULER_VERSION		[latest]
 #   HAULER_DIR			[/opt/hauler]
 #   HAULER_INSTALL_DIR		[/usr/local/bin]
@@ -395,7 +396,8 @@ function base () {
 
   # install all the base bits.
   info "updating kernel settings"
-  cat << EOF > /etc/sysctl.d/10-rke2-airgap.conf
+  # use 99-x-... to make sure it loads last unless there's another 99-x- file
+  cat << EOF > /etc/sysctl.d/99-x-rke2-airgap.conf
 # SWAP settings
 vm.swappiness=0
 vm.panic_on_oom=0
@@ -443,6 +445,20 @@ net.ipv4.ip_forward=1
 # monitor file system events
 fs.inotify.max_user_instances=8192
 fs.inotify.max_user_watches=1048576
+
+### ignore... switching to Cilium because Canal is broken
+## ARP caused ping issues between pods, change for new interfaces
+##net.ipv4.conf.all.rp_filter = 0
+##net.ipv4.conf.all.arp_ignore = 0
+#net.ipv4.conf.default.rp_filter = 0
+#net.ipv4.conf.default.arp_ignore = 0
+#net.ipv4.conf.eth0.rp_filter = 0
+#net.ipv4.conf.eth0.arp_ignore = 0
+## and for existing ethernet on controller and worker nodes
+#net.ipv4.conf.enp62s0f0.rp_filter = 0
+#net.ipv4.conf.enp62s0f0.arp_ignore = 0
+#net.ipv4.conf.enP5p9s0.rp_filter = 0
+#net.ipv4.conf.enP5p9s0.arp_ignore = 0
 EOF
   sysctl --system > /dev/null 2>&1
 
@@ -513,14 +529,29 @@ EOF
   if ! grep etcd /etc/passwd > /dev/null 2>&1 ; then useradd -r -c "etcd user" -s /sbin/nologin -M etcd -U ; fi
 
   # create stig config files
-  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images
-  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
+  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images/
+  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\nbind-address: $(hostname -I | awk '{ print $1 }')\nnode-ip: $(hostname -I | awk '{ print $1 }')\ncni: cilium\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
 
   # set up audit policy file
   echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nmetadata:\n  name: rke2-audit-policy\nrules:\n  - level: Metadata\n    resources:\n    - group: \"\"\n      resources: [\"secrets\"]\n  - level: RequestResponse\n    resources:\n    - group: \"\"\n      resources: [\"*\"]" > /etc/rancher/rke2/audit-policy.yaml
 
   # set up ssl passthrough for nginx
   echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
+
+#  if [ ! -f /var/lib/rancher/rke2/server/manifests/rke2-canal-config.yaml ]; then
+#    cat <<EOF >/var/lib/rancher/rke2/server/manifests/rke2-canal-config.yaml
+#apiVersion: helm.cattle.io/v1
+#kind: HelmChartConfig
+#metadata:
+#  name: rke2-canal
+#  namespace: kube-system
+#spec:
+#  valuesContent: |-
+#    flannel:
+#      regexIface: '^en[pP]'
+#      mtu: 1500
+#EOF
+#  fi
 
   # install rke2 - stig'd
   dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y
@@ -562,7 +593,7 @@ function deploy_worker () {
   # setup RKE2
   info "setting up rke2 agent"
   mkdir -p /etc/rancher/rke2/
-  echo -e "server: https://${serverIp}:9345\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
+  echo -e "server: https://${serverIp}:9345\nbind-address: $(hostname -I | awk '{ print $1 }')\nnode-ip: $(hostname -I | awk '{ print $1 }')\ncni: cilium\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
 
   # install rke2
   dnf install -y rke2-agent rke2-common rke2-selinux > /dev/null 2>&1 || fatal "packages didn't install"
@@ -572,9 +603,26 @@ function deploy_worker () {
 
 ################################# longhorn ################################
 function longhorn () {
+  if [ -z "${LONGHORN_BOOTSTRAP_PASSWORD+x}" ] || [ -z "$LONGHORN_BOOTSTRAP_PASSWORD" ]; then
+    echo "ERROR: LONGHORN_BOOTSTRAP_PASSWORD is not set. It must be set as an environment variable before running this script."
+    exit 1
+  fi
+
   # deploy longhorn with local helm/images
   info "deploying longhorn"
   helm upgrade -i longhorn oci://${serverIp}:500${PORTSUFFIX}/hauler/longhorn --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.host=longhorn.${DOMAIN} --plain-http
+
+  USER="admin"; PASSWORD="${LONGHORN_BOOTSTRAP_PASSWORD}"; echo "${USER}:$(openssl passwd -stdin -apr1 <<< ${PASSWORD})" > ./auth
+  kubectl -n longhorn-system create secret generic basic-auth --from-file=./auth
+  kubectl annotate ingress longhorn-ingress \
+      -n longhorn-system \
+      nginx.ingress.kubernetes.io/auth-type=basic \
+      nginx.ingress.kubernetes.io/ssl-redirect=false \
+      nginx.ingress.kubernetes.io/auth-secret=basic-auth \
+      nginx.ingress.kubernetes.io/auth-realm="Authentication Required" \
+      nginx.ingress.kubernetes.io/proxy-body-size=10000m \
+      --overwrite
+  rm -f ./auth
 }
 
 ################################# rancher ################################
