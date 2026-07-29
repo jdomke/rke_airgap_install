@@ -8,28 +8,40 @@
 # note: build does not need sudo/root if openssl / zstd / rsync / jq are available
 
 # additional control variables:
-#   DOMAIN			[awesome.sauce]
-#   RANCHER_VERSION		[latest]
-#   RANCHER_BOOTSTRAP_PASSWORD	<must be set>
-#   RKE_VERSION			[latest]
-#   RKE_CLUSTER_JOIN_TOKEN	<must be set>
-#   CERT_VERSION		[latest]
-#   LONGHORN_VERSION		[latest]
-#   LONGHORN_BOOTSTRAP_PASSWORD <must be set>
-#   HAULER_VERSION		[latest]
-#   HAULER_DIR			[/opt/hauler]
-#   HAULER_INSTALL_DIR		[/usr/local/bin]
-#   HELM_INSTALL_DIR		[/usr/local/bin]
-#   AIRGAP_BUILD_OUT		[mktemp]
-#   AIRGAP_BUILD_DIR		[mktemp]
-#   GOVMESSAGE			["US bla bla"]
-#   USE_SUDO			[false]
+#   DOMAIN				[awesome.sauce]
+#   RANCHER_VERSION			[latest]
+#   RANCHER_BOOTSTRAP_PASSWORD		<must be set>
+#   RKE_VERSION				[latest]
+#   RKE_CLUSTER_JOIN_TOKEN		<must be set>
+#   CERT_VERSION			[latest]
+#   LONGHORN_VERSION			[latest]
+#   LONGHORN_BOOTSTRAP_PASSWORD		<must be set>
+#   HAULER_VERSION			[latest]
+#   HAULER_DIR				[/opt/hauler]
+#   HAULER_INSTALL_DIR			[/usr/local/bin]
+#   HELM_INSTALL_DIR			[/usr/local/bin]
+#   CILIUM_CLI_VERSION			[stable]
+#   CILIUM_CLI_INSTALL_DIR		[/usr/local/bin]
+#   CILIUM_UI_BOOTSTRAP_PASSWORD	<must be set>
+#   AIRGAP_BUILD_OUT			[mktemp]
+#   AIRGAP_BUILD_DIR			[mktemp]
+#   GOVMESSAGE				["US bla bla"]
+#   USE_SUDO				[false]
+#
+# just bring down and back up:
+#   controller: /usr/bin/rke2-killall.sh; wait 1m; systemctl enable --now rke2-server
+#               kubectl -n kube-system get pods -A -w
+#   workers:    /usr/bin/rke2-killall.sh; wait 1m; systemctl enable --now rke2-agent
+#
+# "only" restart all containers:
+#   kubectl get deployments -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' | while read ns deploy; do     kubectl -n "$ns" rollout restart deployment "$deploy";   done
+#   kubectl get pods -A -w
 #
 # purge and clean the controller:
-#   helm uninstall rancher -n cattle-system; kubectl delete namespace cattle-system; helm uninstall longhorn -n longhorn-system; kubectl delete namespace longhorn-system; systemctl disable --now rke2-server.service rke2-agent.service hauler-fileserver-amd64@8080 hauler-fileserver-arm64@8081 hauler-registry-amd64@5000 hauler-registry-arm64@5001; umount -l $(mount | grep /run/k3s/containerd | cut -d' ' -f3); dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf ../hauler/* /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/ /usr/local/bin/{hauler,helm} /tmp/{airgap,hauler,helm}*;
+#   helm uninstall rancher -n cattle-system; kubectl delete namespace cattle-system; helm uninstall longhorn -n longhorn-system; kubectl delete namespace longhorn-system; /usr/bin/rke2-killall.sh; systemctl disable --now rke2-server.service rke2-agent.service hauler-fileserver-amd64@8080 hauler-fileserver-arm64@8081 hauler-registry-amd64@5000 hauler-registry-arm64@5001; umount -l $(mount | grep /run/k3s/containerd | cut -d' ' -f3); dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf ../hauler/* /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/ /usr/local/bin/{hauler,helm} /tmp/{airgap,hauler,helm}*;
 #
 # purge and clean a worker
-#   systemctl disable --now rke2-agent.service; dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/
+#   /usr/bin/rke2-killall.sh; systemctl disable --now rke2-agent.service; dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y; systemctl daemon-reload; rm -rf /etc/rancher/rke2/ /var/lib/rancher/rke2/ /run/k3s/
 
 # -----------
 # this script is designed to bootstrap a POC cluster using Hauler
@@ -157,7 +169,7 @@ function build () {
   # temp dir
   mkdir -p hauler_temp
 
-  # repod
+  # repos
   helm repo add jetstack https://charts.jetstack.io --force-update > /dev/null 2>&1
   helm repo add longhorn https://charts.longhorn.io --force-update > /dev/null 2>&1
 
@@ -504,6 +516,10 @@ function deploy_control () {
     echo "ERROR: RKE_CLUSTER_JOIN_TOKEN is not set. It must be set as an environment variable before running this script."
     exit 1
   fi
+  if [ -z "${CILIUM_UI_BOOTSTRAP_PASSWORD+x}" ] || [ -z "$CILIUM_UI_BOOTSTRAP_PASSWORD" ]; then
+    echo "ERROR: CILIUM_UI_BOOTSTRAP_PASSWORD is not set. It must be set as an environment variable before running this script."
+    exit 1
+  fi
 
   # wait and add link
   grep -qxF "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH=\$PATH:${HAULER_INSTALL_DIR}/:${HELM_INSTALL_DIR}/:/var/lib/rancher/rke2/bin/" ~/.bashrc || echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH=\$PATH:${HAULER_INSTALL_DIR}/:${HELM_INSTALL_DIR}/:/var/lib/rancher/rke2/bin/" >> ~/.bashrc
@@ -530,12 +546,44 @@ EOF
 
   # create stig config files
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images/
-  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\nbind-address: $(hostname -I | awk '{ print $1 }')\nnode-ip: $(hostname -I | awk '{ print $1 }')\ncni: cilium\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
+  cat <<EOF /etc/rancher/rke2/config.yaml
+#profile: cis-1.23
+selinux: true
+secrets-encryption: true
+bind-address: $(hostname -I | awk '{ print $1 }')
+node-ip: $(hostname -I | awk '{ print $1 }')
+cni: cilium
+disable-kube-proxy: true
+ingress-controller:
+- traefik
+token: ${RKE_CLUSTER_JOIN_TOKEN}
+write-kubeconfig-mode: "0600"
+kube-controller-manager-arg:
+- bind-address=127.0.0.1
+- use-service-account-credentials=true
+- tls-min-version=VersionTLS12
+- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+kube-scheduler-arg:
+- tls-min-version=VersionTLS12
+- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+kube-apiserver-arg:
+- tls-min-version=VersionTLS12
+- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+- authorization-mode=RBAC,Node
+- anonymous-auth=false
+- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml
+- audit-log-mode=blocking-strict
+- audit-log-maxage=30
+kubelet-arg:
+- protect-kernel-defaults=true
+- read-only-port=0
+- authorization-mode=Webhook
+EOF
 
   # set up audit policy file
   echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nmetadata:\n  name: rke2-audit-policy\nrules:\n  - level: Metadata\n    resources:\n    - group: \"\"\n      resources: [\"secrets\"]\n  - level: RequestResponse\n    resources:\n    - group: \"\"\n      resources: [\"*\"]" > /etc/rancher/rke2/audit-policy.yaml
 
-  # set up ssl passthrough for nginx
+  # set up ssl passthrough for nginx XXX FIXME LATER for traefik
   echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
 
 #  if [ ! -f /var/lib/rancher/rke2/server/manifests/rke2-canal-config.yaml ]; then
@@ -552,6 +600,90 @@ EOF
 #      mtu: 1500
 #EOF
 #  fi
+
+  # config the cilium network
+  if [ ! -f /var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml ]; then
+    cat <<EOF >/var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-cilium
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    k8sServiceHost: $(hostname -I | awk '{ print $1 }')
+    k8sServicePort: 6443
+    hubble:
+      enabled: true
+      metrics:
+        enabled:
+          - dns
+          - drop
+          - http
+      relay:
+        enabled: true
+      ui:
+        enabled: true
+        ingress:
+          enabled: true
+          className: traefik
+          hosts:
+            - hubble.${DOMAIN}
+    #ipv4:
+    #  enabled: true
+    #ipv6:
+    #  enabled: false
+    kubeProxyReplacement: true
+    l7Proxy: true
+    monitor:
+      enabled: false #true
+    #envoy:
+    #  enabled: true
+EOF
+  fi
+
+  # get the cilium CLI (https://support.scc.suse.com/s/kb/Using-the-Cilium-CLI-with-RKE2?language=en_US)
+  : "${CILIUM_CLI_VERSION:="$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)"}"
+  : "${CILIUM_CLI_INSTALL_DIR:="/usr/local/bin"}"
+  curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-$(get_arch).tar.gz{,.sha256sum}
+  sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+  tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz ${CILIUM_CLI_INSTALL_DIR}/
+  rm -f cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+
+  grep -qxF "^cilium() {" ~/.bashrc || cat <<'EOF' >> ~/.bashrc
+cilium() {
+    case "$1" in
+        install|upgrade|config|uninstall)
+            echo "Error: 'cilium $1' is not allowed."
+            return 1
+            ;;
+        *)
+            command cilium "$@"
+            ;;
+    esac
+}
+EOF
+  # can test cilium network with:
+  #   cilium connectivity test
+  #   cilium connectivity test --cleanup
+
+  USER="admin"; PASSWORD="${CILIUM_UI_BOOTSTRAP_PASSWORD}"; echo "${USER}:$(openssl passwd -stdin -apr1 <<< ${PASSWORD})" > ./auth
+  kubectl -n kube-system create secret generic hubble-basic-auth --from-file=./auth
+  kubectl apply -f - <<'EOF'
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hubble-basic-auth
+  namespace: kube-system
+spec:
+  basicAuth:
+    secret: hubble-basic-auth
+EOF
+  kubectl annotate ingress hubble-ui \
+      -n kube-system \
+      traefik.ingress.kubernetes.io/router.middlewares=kube-system-hubble-basic-auth@kubernetescrd \
+      --overwrite
+  rm -f ./auth
 
   # install rke2 - stig'd
   dnf list --installed | awk '/@hauler/ {print $1}' | xargs -r dnf remove -y
@@ -593,7 +725,20 @@ function deploy_worker () {
   # setup RKE2
   info "setting up rke2 agent"
   mkdir -p /etc/rancher/rke2/
-  echo -e "server: https://${serverIp}:9345\nbind-address: $(hostname -I | awk '{ print $1 }')\nnode-ip: $(hostname -I | awk '{ print $1 }')\ncni: cilium\ntoken: ${RKE_CLUSTER_JOIN_TOKEN}\nwrite-kubeconfig-mode: \"0600\"\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
+  cat <<EOF /etc/rancher/rke2/config.yaml
+#profile: cis-1.23
+server: https://${serverIp}:9345
+bind-address: $(hostname -I | awk '{ print $1 }')
+node-ip: $(hostname -I | awk '{ print $1 }')
+cni: cilium
+disable-kube-proxy: true
+token: ${RKE_CLUSTER_JOIN_TOKEN}
+write-kubeconfig-mode: "0600"
+kube-apiserver-arg:
+- "authorization-mode=RBAC,Node"
+kubelet-arg:
+- "protect-kernel-defaults=true"
+EOF
 
   # install rke2
   dnf install -y rke2-agent rke2-common rke2-selinux > /dev/null 2>&1 || fatal "packages didn't install"
@@ -610,17 +755,33 @@ function longhorn () {
 
   # deploy longhorn with local helm/images
   info "deploying longhorn"
-  helm upgrade -i longhorn oci://${serverIp}:500${PORTSUFFIX}/hauler/longhorn --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.host=longhorn.${DOMAIN} --plain-http
+  helm upgrade -i longhorn oci://${serverIp}:500${PORTSUFFIX}/hauler/longhorn --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.ingressClassName=traefik --set ingress.host=longhorn.${DOMAIN} --plain-http
 
   USER="admin"; PASSWORD="${LONGHORN_BOOTSTRAP_PASSWORD}"; echo "${USER}:$(openssl passwd -stdin -apr1 <<< ${PASSWORD})" > ./auth
-  kubectl -n longhorn-system create secret generic basic-auth --from-file=./auth
+  kubectl -n longhorn-system create secret generic longhorn-basic-auth --from-file=./auth
+  kubectl apply -f - <<'EOF'
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: longhorn-basic-auth
+  namespace: longhorn-system
+spec:
+  basicAuth:
+    secret: longhorn-basic-auth
+EOF
+  kubectl apply -f - <<'EOF'
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: longhorn-buffering
+  namespace: longhorn-system
+spec:
+  buffering:
+    maxRequestBodyBytes: 10737418240
+EOF
   kubectl annotate ingress longhorn-ingress \
       -n longhorn-system \
-      nginx.ingress.kubernetes.io/auth-type=basic \
-      nginx.ingress.kubernetes.io/ssl-redirect=false \
-      nginx.ingress.kubernetes.io/auth-secret=basic-auth \
-      nginx.ingress.kubernetes.io/auth-realm="Authentication Required" \
-      nginx.ingress.kubernetes.io/proxy-body-size=10000m \
+      traefik.ingress.kubernetes.io/router.middlewares=longhorn-system-longhorn-basic-auth@kubernetescrd,longhorn-system-longhorn-buffering@kubernetescrd \
       --overwrite
   rm -f ./auth
 }
