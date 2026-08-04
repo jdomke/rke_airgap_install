@@ -27,6 +27,7 @@
 #   AIRGAP_BUILD_DIR			[mktemp]
 #   GOVMESSAGE				["US bla bla"]
 #   USE_SUDO				[false]
+#   NVIDIAGPU_DRIVER_VERSION            <optional>
 #
 # just bring down and back up:
 #   controller: /usr/bin/rke2-killall.sh; wait 1m; systemctl enable --now rke2-server
@@ -701,6 +702,36 @@ EOF
   cd "${HAULER_DIR}"
   curl -sfL http://${serverIp}:808${PORTSUFFIX}/$(curl -sfL http://${serverIp}:808${PORTSUFFIX}/ | grep helm | sed -e 's/<[^>]*>//g') | tar -zxvf - > /dev/null 2>&1
   install -m 755 "linux-$(get_arch)/helm" "${HELM_INSTALL_DIR}" || fatal "Failed to install helm to ${HELM_INSTALL_DIR}"
+
+  # /bin/nvidia-smi --version | /bin/grep '^DRIVER version' | /bin/awk '{split($NF,a,"."); print a[1]}'
+  if [ -n "${NVIDIAGPU_DRIVER_VERSION}" ]; then
+    kubectl apply -f - <<EOF
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: gpu-operator
+  namespace: kube-system
+spec:
+  repo: https://helm.ngc.nvidia.com/nvidia
+  chart: gpu-operator
+  version: v26.3.2
+  targetNamespace: gpu-operator
+  createNamespace: true
+  valuesContent: |-
+    toolkit:
+      env:
+      - name: CONTAINERD_SOCKET
+        value: /run/k3s/containerd/containerd.sock
+    driver:
+      repository: registry.suse.com/third-party/nvidia
+      usePrecompiled: true
+      version: ${NVIDIA_DRIVER_VERSION}
+EOF
+  elif [ -n "${AMDGPU_DRIVER_VERSION}" ]; then
+    sleep 0
+  elif [ -n "${INTELGPU_DRIVER_VERSION}" ]; then
+    sleep 0
+  fi
 
   echo "------------------------------------------------------------------------------------"
   echo -e "  Run: ${BLUE} 'source ~/.bashrc' "${NO_COLOR}
