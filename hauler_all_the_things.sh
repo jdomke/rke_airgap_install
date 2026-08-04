@@ -547,7 +547,7 @@ EOF
 
   # create stig config files
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images/
-  cat <<EOF /etc/rancher/rke2/config.yaml
+  cat <<EOF >/etc/rancher/rke2/config.yaml
 #profile: cis-1.23
 selinux: true
 secrets-encryption: true
@@ -756,7 +756,7 @@ function deploy_worker () {
   # setup RKE2
   info "setting up rke2 agent"
   mkdir -p /etc/rancher/rke2/
-  cat <<EOF /etc/rancher/rke2/config.yaml
+  cat <<EOF >/etc/rancher/rke2/config.yaml
 #profile: cis-1.23
 server: https://${serverIp}:9345
 bind-address: $(hostname -I | awk '{ print $1 }')
