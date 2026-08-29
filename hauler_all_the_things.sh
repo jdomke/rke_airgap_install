@@ -775,6 +775,16 @@ EOF
   dnf install -y rke2-agent rke2-common rke2-selinux > /dev/null 2>&1 || fatal "packages didn't install"
   systemctl enable --now rke2-agent.service > /dev/null 2>&1 || fatal "rke2-agent didn't start"
   info "worker node running"
+
+  grep -qxF "export PATH=\$PATH:/var/lib/rancher/rke2/bin/" ~/.bashrc || echo "export PATH=\$PATH:/var/lib/rancher/rke2/bin/" >> ~/.bashrc
+  if [ ! -f /etc/crictl.yaml ]; then
+    cat <<EOF >/etc/crictl.yaml
+runtime-endpoint: unix:///run/k3s/containerd/containerd.sock
+image-endpoint: unix:///run/k3s/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
+  fi
 }
 
 ################################# longhorn ################################
